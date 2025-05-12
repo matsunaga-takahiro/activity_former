@@ -1,0 +1,15 @@
+{"time":"2025-05-12T14:46:57.187689+09:00","level":"INFO","msg":"stream: starting","core version":"0.19.9","symlink path":"/Users/matsunagatakahiro/Desktop/res2025/ActFormer/RoutesFormer/actgpt0512/wandb/offline-run-20250512_144656-d3u53rp7/logs/debug-core.log"}
+{"time":"2025-05-12T14:46:57.29563+09:00","level":"WARN","msg":"GraphQL client is nil, skipping feature loading"}
+{"time":"2025-05-12T14:46:57.295863+09:00","level":"INFO","msg":"created new stream","id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:57.295893+09:00","level":"INFO","msg":"stream: started","id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:57.295911+09:00","level":"INFO","msg":"writer: Do: started","stream_id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:57.295957+09:00","level":"INFO","msg":"sender: started","stream_id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:57.296079+09:00","level":"INFO","msg":"handler: started","stream_id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:57.299363+09:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-05-12T14:46:58.302074+09:00","level":"INFO","msg":"stream: closing","id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:58.302111+09:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-05-12T14:46:58.302149+09:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-05-12T14:46:58.302201+09:00","level":"INFO","msg":"handler: closed","stream_id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:58.302213+09:00","level":"INFO","msg":"writer: Close: closed","stream_id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:58.302219+09:00","level":"INFO","msg":"sender: closed","stream_id":"d3u53rp7"}
+{"time":"2025-05-12T14:46:58.303156+09:00","level":"INFO","msg":"stream: closed","id":"d3u53rp7"}

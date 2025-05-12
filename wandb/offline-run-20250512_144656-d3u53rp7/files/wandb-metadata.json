@@ -1,0 +1,11 @@
+{
+  "os":  "macOS-15.4.1-arm64-arm-64bit",
+  "python":  "CPython 3.9.18",
+  "startedAt":  "2025-05-12T05:46:57.172373Z",
+  "program":  "/Users/matsunagatakahiro/Desktop/res2025/ActFormer/RoutesFormer/actgpt0512/training_gpt.py",
+  "codePath":  "training_gpt.py",
+  "root":  "/Users/matsunagatakahiro/Desktop/res2025/ActFormer/RoutesFormer/actgpt0512",
+  "host":  "MatsunaganoMacBook-Pro.local",
+  "executable":  "/Users/matsunagatakahiro/Desktop/res2025/myenv/bin/python3",
+  "codePathLocal":  "training_gpt.py"
+}
