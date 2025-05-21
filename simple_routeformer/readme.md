@@ -1,0 +1,1 @@
+route.csv, 接続行列.pt, ノード特徴量.ptがあればroutesformerが回るはず

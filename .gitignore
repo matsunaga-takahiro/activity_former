@@ -1,0 +1,8 @@
+/actformer0411
+/__pycache__/
+/.DS_Store
+/reference/
+/output/
+/actgpt0512/__pycache__/
+/actgpt0512/wandb/
+/actgpt0512/attn_image/
