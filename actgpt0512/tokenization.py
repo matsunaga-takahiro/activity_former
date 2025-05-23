@@ -52,7 +52,6 @@ class Tokenization:
         loc_tokens = self.loc_data.clone().to(self.device)
         act_tokens = self.act_data.clone().to(self.device)
 
-
         # モードに応じたトークン化処理 # time, loc, actで分けて用意→encoder, decoderに入れる
         if mode == "simple": # begin only
             ##前と後ろにパディングトークンをくっつける
@@ -300,10 +299,10 @@ class Tokenization:
 
 ## 入力データでは＜b＞がないのと<s>が最後に連続している→最後の２つを<e><p>に置換する
 class TokenizationGPT:
-    def __init__(self, network, TT, A):
+    def __init__(self, network, TT, Z, A):
         self.network = network
         self.TT = TT # time token num 28
-        # self.Z = Z # zone num.
+        self.Z = Z # zone num.
         self.A = A # action num 8
         # self.num_nodes = network.N # node feature埋め込みの時に必要では
         self.time_SPECIAL_TOKENS = { 
@@ -312,12 +311,12 @@ class TokenizationGPT:
             "<B>": TT + 2, 
             "<m>": TT + 3,
         }
-        # self.loc_SPECIAL_TOKENS = { 
-        #     "<p>": Z, 
-        #     "<e>": Z + 1, 
-        #     "<b>": Z + 2, 
-        #     "<m>": Z + 3, 
-        # }
+        self.loc_SPECIAL_TOKENS = { 
+            "<p>": Z, 
+            "<E>": Z + 1, 
+            "<B>": Z + 2, 
+            "<m>": Z + 3, 
+        }
         self.act_SPECIAL_TOKENS = { # valueはトークンID（nodeid）
             "<p>": A,  # パディングトークン # シーケンス全部使う場合は不要
             "<E>": A + 1,  # 終了トークン 
@@ -325,34 +324,42 @@ class TokenizationGPT:
             "<m>": A + 3,  # 非隣接ノードトークン # 現実には生成時にプリズム制約などをかけることができるはず（多分）
         }
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.time_token_sequences = None   
+        self.time_token_sequences = None
+        self.loc_token_sequences = None   
         self.act_token_sequences = None
 
-    def tokenization(self, time_data, act_data, mode):
+    def tokenization(self, time_data, loc_data, act_data, mode):
         self.time_data = time_data
-        # self.loc_data = loc_data
+        self.loc_data = loc_data
         self.act_data = act_data
 
         num_data_time = len(self.time_data) # sample数のはず
         num_data_act = len(self.act_data) 
-        # num_data_loc = len(self.loc_data) 
+        num_data_loc = len(self.loc_data) 
         if num_data_time != num_data_act: # or num_data_time != num_data_loc:
             raise ValueError("The number of time, act, and loc data must be the same.")
+        if num_data_time != num_data_loc:
+            raise ValueError("The number of time, act, and loc data must be the same.")
 
-        time_tokens = self.time_data.clone().to(self.device) 
+        time_tokens = self.time_data.clone().to(self.device)
+        loc_tokens = self.loc_data.clone().to(self.device) 
         act_tokens = self.act_data.clone().to(self.device)
 
         # モードに応じたトークン化処理 # time, loc, actで分けて用意→encoder, decoderに入れる
         if mode == "simple": # begin only
-            pad_time = time_tokens == self.time_SPECIAL_TOKENS["<p>"] # dictの値を参照している
+            pad_time = time_tokens == self.time_SPECIAL_TOKENS["<p>"] # dictの値を参照してい
+            pad_loc = loc_tokens == self.loc_SPECIAL_TOKENS["<p>"]
             pad_act = act_tokens == self.act_SPECIAL_TOKENS["<p>"]
 
             # 最後の2つの終了トークンを<p><p>に置換
             first_pad_time_idx = (~pad_time).float().argmin(dim=1)
+            first_pad_loc_idx = (~pad_loc).float().argmin(dim=1)
             first_pad_act_idx = (~pad_act).float().argmin(dim=1)
 
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 1] = self.time_SPECIAL_TOKENS["<p>"]
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 2] = self.time_SPECIAL_TOKENS["<p>"]
+            loc_tokens[torch.arange(loc_tokens.size(0)), first_pad_loc_idx - 1] = self.loc_SPECIAL_TOKENS["<p>"]
+            loc_tokens[torch.arange(loc_tokens.size(0)), first_pad_loc_idx - 2] = self.loc_SPECIAL_TOKENS["<p>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 1] = self.act_SPECIAL_TOKENS["<p>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 2] = self.act_SPECIAL_TOKENS["<p>"]
 
@@ -361,14 +368,17 @@ class TokenizationGPT:
             # act_tokens[torch.arange(act_tokens.size(0)), 0] = self.act_SPECIAL_TOKENS["<B>"]
             # 新しい <B> トークン列を作成（すべて <B> ID）
             bos_time = torch.full((time_tokens.size(0), 1), self.time_SPECIAL_TOKENS["<B>"], dtype=time_tokens.dtype, device=time_tokens.device)
+            bos_loc  = torch.full((loc_tokens.size(0), 1), self.loc_SPECIAL_TOKENS["<B>"], dtype=loc_tokens.dtype, device=loc_tokens.device)
             bos_act  = torch.full((act_tokens.size(0), 1), self.act_SPECIAL_TOKENS["<B>"], dtype=act_tokens.dtype, device=act_tokens.device)
             
             # 先頭に <B> を追加
             time_tokens = torch.cat([bos_time, time_tokens], dim=1)
+            loc_tokens  = torch.cat([bos_loc,  loc_tokens],  dim=1)
             act_tokens  = torch.cat([bos_act,  act_tokens],  dim=1)
 
             # 最後一個抜く（正解データとして使われるから）
             time_tokens = time_tokens[:, :-1]
+            loc_tokens = loc_tokens[:, :-1]
             act_tokens = act_tokens[:, :-1]
 
         elif mode == "complete": # begin and end
@@ -376,45 +386,55 @@ class TokenizationGPT:
             # time_tokens[torch.arange(time_tokens.size(0)), 0] = self.time_SPECIAL_TOKENS["<B>"]
             # act_tokens[torch.arange(act_tokens.size(0)), 0] = self.act_SPECIAL_TOKENS["<B>"]
             bos_time = torch.full((time_tokens.size(0), 1), self.time_SPECIAL_TOKENS["<B>"], dtype=time_tokens.dtype, device=time_tokens.device)
+            bos_loc  = torch.full((loc_tokens.size(0), 1), self.loc_SPECIAL_TOKENS["<B>"], dtype=loc_tokens.dtype, device=loc_tokens.device)
             bos_act  = torch.full((act_tokens.size(0), 1), self.act_SPECIAL_TOKENS["<B>"], dtype=act_tokens.dtype, device=act_tokens.device)
             
             # 先頭に <B> を追加
             time_tokens = torch.cat([bos_time, time_tokens], dim=1)
+            loc_tokens  = torch.cat([bos_loc,  loc_tokens],  dim=1)
             act_tokens  = torch.cat([bos_act,  act_tokens],  dim=1)
 
             # 非パディングの最後尾をEに置換
             pad_time = time_tokens == self.time_SPECIAL_TOKENS["<p>"] # dictの値を参照している
             pad_act = act_tokens == self.act_SPECIAL_TOKENS["<p>"]
+            pad_loc = loc_tokens == self.loc_SPECIAL_TOKENS["<p>"]
             first_pad_time_idx = (pad_time).float().argmin(dim=1)
+            first_pad_loc_idx = (pad_loc).float().argmin(dim=1)
             first_pad_act_idx = (pad_act).float().argmin(dim=1)
 
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 1] = self.time_SPECIAL_TOKENS["<p>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 1] = self.act_SPECIAL_TOKENS["<p>"]
+            loc_tokens[torch.arange(loc_tokens.size(0)), first_pad_loc_idx - 1] = self.loc_SPECIAL_TOKENS["<p>"]
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 2] = self.time_SPECIAL_TOKENS["<E>"]
+            loc_tokens[torch.arange(loc_tokens.size(0)), first_pad_loc_idx - 2] = self.loc_SPECIAL_TOKENS["<E>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 2] = self.act_SPECIAL_TOKENS["<E>"]
 
             # 最後一個抜く（正解データとして使われるから）
             time_tokens = time_tokens[:, :-1]
+            loc_tokens = loc_tokens[:, :-1]
             act_tokens = act_tokens[:, :-1]
 
         elif mode == "next": # end only
             # first: add padding tokens to the head and tail positions ## checked
             pad_time = time_tokens == self.time_SPECIAL_TOKENS["<p>"] # dictの値を参照している
+            pad_loc = loc_tokens == self.loc_SPECIAL_TOKENS["<p>"]
             pad_act = act_tokens == self.act_SPECIAL_TOKENS["<p>"]
 
             # # 最後の終了トークンを<e><p>に置換
             first_pad_time_idx = (~pad_time).float().argmin(dim=1)
+            first_pad_loc_idx = (~pad_loc).float().argmin(dim=1)
             first_pad_act_idx = (~pad_act).float().argmin(dim=1)     
 
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 1] = self.time_SPECIAL_TOKENS["<p>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 1] = self.act_SPECIAL_TOKENS["<p>"]
+            loc_tokens[torch.arange(loc_tokens.size(0)), first_pad_loc_idx - 1] = self.loc_SPECIAL_TOKENS["<p>"]
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 2] = self.time_SPECIAL_TOKENS["<E>"]
+            loc_tokens[torch.arange(loc_tokens.size(0)), first_pad_loc_idx - 2] = self.loc_SPECIAL_TOKENS["<E>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 2] = self.act_SPECIAL_TOKENS["<E>"]  
 
             # 冒頭を抜く
             # time_tokens = time_tokens[:, 1:]
             # act_tokens = act_tokens[:, 1:]
-            
             # 冒頭の2列を<p>に置換
             # time_tokens[torch.arange(time_tokens.size(0)), 0] = self.time_SPECIAL_TOKENS["<p>"]
             # act_tokens[torch.arange(act_tokens.size(0)), 0] = self.act_SPECIAL_TOKENS["<p>"]
@@ -423,28 +443,27 @@ class TokenizationGPT:
 
         elif mode == "traveled":
             new_column_time = torch.full((num_data_time, 1), self.time_SPECIAL_TOKENS["<p>"], device=self.device)
-            # new_column_loc = torch.full((num_data_loc, 1), self.loc_SPECIAL_TOKENS["<p>"], device=self.device)
+            new_column_loc = torch.full((num_data_loc, 1), self.loc_SPECIAL_TOKENS["<p>"], device=self.device)
             new_column_act = torch.full((num_data_act, 1), self.act_SPECIAL_TOKENS["<p>"], device=self.device)
 
             time_tokens = torch.cat((new_column_time, time_tokens), dim=1)
-            # loc_tokens = torch.cat((new_column_loc, loc_tokens), dim=1)
+            loc_tokens = torch.cat((new_column_loc, loc_tokens), dim=1)
             act_tokens = torch.cat((new_column_act, act_tokens), dim=1)
-            # print('after traveled tokenization', act_tokens.shape, act_tokens[0])
 
         else:
             raise ValueError(f"Unknown mode '{mode}'.")
 
         # リストをPyTorchテンソルに変換
-        return time_tokens.clone().detach().to(torch.long), act_tokens.clone().detach().to(torch.long)
+        return time_tokens.clone().detach().to(torch.long), loc_tokens.clone().detach().to(torch.long), act_tokens.clone().detach().to(torch.long)
     
 
     def mask(self, mask_rate): # ランダムにトークンを <m> に置換（mask） # つかわない？？？？
         time_mask_token_id = self.time_SPECIAL_TOKENS["<m>"] # 辞書の値を参照しているだけ
-        # loc_mask_token_id = self.loc_SPECIAL_TOKENS["<m>"] # 辞書の値を参照しているだけ
+        loc_mask_token_id = self.loc_SPECIAL_TOKENS["<m>"] # 辞書の値を参照しているだけ
         act_mask_token_id = self.act_SPECIAL_TOKENS["<m>"] # 辞書の値を参照しているだけ
 
         time_token_sequences = self.time_data.clone().to(self.device)
-        # loc_token_sequences = self.loc_data.clone().to(self.device)
+        loc_token_sequences = self.loc_data.clone().to(self.device)
         act_token_sequences = self.act_data.clone().to(self.device)
         batch_size, seq_len = act_token_sequences.shape # どうせ形状は共通
 
@@ -456,7 +475,7 @@ class TokenizationGPT:
         # マスクトークンを適用
         # token_sequences[mask_tokens] = mask_token_id
         time_token_sequences[mask_tokens] = time_mask_token_id
-        # loc_token_sequences[mask_tokens] = loc_mask_token_id
+        loc_token_sequences[mask_tokens] = loc_mask_token_id
         act_token_sequences[mask_tokens] = act_mask_token_id
 
         # どうせ長さは同じ
@@ -464,21 +483,21 @@ class TokenizationGPT:
         time_new_column2 = torch.full((len(self.time_data), 1), self.time_SPECIAL_TOKENS["<E>"], device=self.device)
         act_new_column = torch.full((len(self.act_data), 1), self.act_SPECIAL_TOKENS["<B>"], device=self.device) 
         act_new_column2 = torch.full((len(self.act_data), 1), self.act_SPECIAL_TOKENS["<E>"], device=self.device) 
-        # loc_new_column = torch.full((len(self.loc_data), 1), self.loc_SPECIAL_TOKENS["<b>"], device=self.device)
-        # loc_new_column2 = torch.full((len(self.loc_data), 1), self.loc_SPECIAL_TOKENS["<e>"], device=self.device)
+        loc_new_column = torch.full((len(self.loc_data), 1), self.loc_SPECIAL_TOKENS["<B>"], device=self.device)
+        loc_new_column2 = torch.full((len(self.loc_data), 1), self.loc_SPECIAL_TOKENS["<E>"], device=self.device)
 
         time_token_sequences = torch.cat((time_token_sequences, time_new_column2), dim=1) # torch.cat dim=0だと行方向＝縦方向に，dim=1だと列方向＝横方向にくっつける
         time_token_sequences = torch.cat((time_new_column, time_token_sequences), dim=1)
         act_token_sequences = torch.cat((act_token_sequences, act_new_column2), dim=1) 
         act_token_sequences = torch.cat((act_new_column, act_token_sequences), dim=1)
-        # loc_token_sequences = torch.cat((loc_token_sequences, loc_new_column2), dim=1) 
-        # loc_token_sequences = torch.cat((loc_new_column, loc_token_sequences), dim=1)
+        loc_token_sequences = torch.cat((loc_token_sequences, loc_new_column2), dim=1) 
+        loc_token_sequences = torch.cat((loc_new_column, loc_token_sequences), dim=1)
 
-        self.time_token_sequences = time_token_sequences # B*T # context tokens: B * C
-        # self.loc_token_sequences = loc_token_sequences
+        self.time_token_sequences = time_token_sequences 
+        self.loc_token_sequences = loc_token_sequences
         self.act_token_sequences = act_token_sequences
 
-        return time_token_sequences, act_token_sequences
+        return time_token_sequences, loc_token_sequences, act_token_sequences
     
 
     #### 特徴量の埋め込み

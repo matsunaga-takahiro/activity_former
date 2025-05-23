@@ -36,13 +36,14 @@ wandb.init(
     "head_num" : 4,
     "d_ie_time" : 16, 
     "d_ie_act" : 16, 
+    "d_ie_loc" : 16,
     "d_fe" : 4, 
     "d_ff" : 32,
     "eos_weight" : 2.5,
     "separate_weight" : 2.5,
     "mask_rate" : 0.1,
     "savefilename": None,
-    "alignment_loss_weight": 0.05,
+    "alignment_loss_weight": 0.005,
     "identical_penalty_weight": 1,
     }
 )
@@ -52,69 +53,98 @@ timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_GPT")
 savefilename = f"ACTGPT_{timestamp}_{run_id}.pth"
 wandb.config.update({"savefilename": savefilename}, allow_val_change=True)
 base_path = '/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog'
+base_path0 = '/Users/matsunagatakahiro/Desktop/res2025/ActFormer/RoutesFormer/actgpt0512'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-df_act = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/actlog_finalinput_structured.csv', index_col=0) #, header=None)
-df_time = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/timelog_finalinput_structured.csv', index_col=0) #, header=None)
-df_indivi_ori = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/attri_all.csv', index_col=None) #, index_col=0)#, header=None)
+df_act = pd.read_csv(os.path.join(base_path0, 'input/act_weekly_filled_structured.csv'))#, index_col=0) #, header=None)
+df_time = pd.read_csv(os.path.join(base_path0, 'input/time_weekly_filled_structured.csv'))#, index_col=0) #, header=None)
+df_loc = pd.read_csv(os.path.join(base_path0, 'input/mesh_weekly_filled_structured.csv'))#, index_col=0) #, header=None)
+df_indivi_ori = pd.read_csv(os.path.join(base_path0, 'input/attri_all.csv'), index_col=None) #, index_col=0)#, header=None)
 
 user_order = df_act.iloc[:, 0].rename('userid')  # Seriesに名前をつける
 df_indivi = df_indivi_ori.set_index('userid').reindex(user_order).reset_index()
 
 df_time.columns = range(df_time.shape[1])
 df_act.columns = range(df_act.shape[1])
+df_act.iloc[:, 1] = df_act.iloc[:, 1].astype(str).str.split('.').str[0] # 最初の行動を整数に
 
-# print('------after-----')
+def to_int_if_possible(x):
+    try:
+        f = float(x)
+        i = int(f)
+        return i if f == i else x  # 2.0 → 2, 2.5 はそのまま（必要なら切り捨てにしても可）
+    except:
+        return x  # 変換できない文字列（例：'<s1>'など）はそのまま返す
+
+df_act.iloc[:, 1:] = df_act.iloc[:, 1:].applymap(to_int_if_possible)
+df_act_val = df_act.iloc[1:, 1:].values.astype(str)
+nunique_act = np.unique(df_act_val)
+print('act num:', len(nunique_act)) 
+print(nunique_act)
+
 df_indivi['age'] = df_indivi['age'].apply(lambda x: x // 10)
 context_vocab_sizes_dict = {}
 
-
-
 for col in df_indivi.columns:
     context_vocab_sizes_dict[col] = len(df_indivi[col].unique()) # ユニークな値の数を辞書に格納
-
 context_vocab_sizes = list(context_vocab_sizes_dict.values())
 
 # 独立なvalueの数
 TT = 33 # 0-24, 25, 26, 27-> 28 # len(set(time2id.values())) # 時間数 24
-# Z = len(set(loc2id.values())) #  
+Z = 145 # ユニークなメッシュが137個　このほかに特殊トークン
 A = 13 # Aは１始まりなので # len(set(act2id.values())) # nan以外は通常トークンにした
 # time2id = {'<s>':26} # TT = 27
 time2id = {'<s>': 26, '<s1>': 27, '<s2>': 28, '<s3>': 29, '<s4>': 30, '<s5>': 31, '<s6>': 32} #, '<s7>': 33, '<s8>': 34, '<s9>': 35, 'nan': 36} # nanは<955>に変換
 # act2id = {'955': 6, '<s>': 7} # A = 7
 act2id = {'955': 6, '<s>': 7, '<s1>': 8, '<s2>': 9, '<s3>': 10, '<s4>': 11, '<s5>': 12, '<s6>': 13}  # 955はnanの代わりに入れている
-print('TT', TT, 'A', A)
+
+uniqueloc_list = np.unique(df_loc.iloc[:, 1:].values.flatten())
+# uniqueloc_list.remove('<p>')
+uniqueloc_list = uniqueloc_list[uniqueloc_list != '<p>']
+
+uniqueloc_list = sorted(uniqueloc_list)
+loc2id = {str(loc): i for i, loc in enumerate(uniqueloc_list)}
+loc2id_add = {'999999': Z-8, '<s>': Z-7, '<s1>': Z-6, '<s2>': Z-5, '<s3>': Z-4, '<s4>': Z-3, '<s5>': Z-2, '<s6>': Z-1}
+loc2id.update(loc2id_add)
+print('TT', TT, 'A', A, 'Z', Z)
 
 df_time = df_time.applymap(lambda x: time2id.get(str(x), x) if pd.notna(x) else x)
 df_act  = df_act.applymap(lambda x: act2id.get(str(x), x)  if pd.notna(x) else x)
-
+df_loc = df_loc.applymap(lambda x: loc2id.get(str(x), x)  if pd.notna(x) else x)
 df_time = df_time.iloc[:, 1:] # index, useridを除く
 df_act = df_act.iloc[:, 1:] # index, useridを除く
+df_loc = df_loc.iloc[:, 1:] # index, useridを除く
 
 # floatとかをintに変換＆<p>
 def safe_float_to_int_act(x): # actを0始まりに変える
     try:
         if isinstance(x, str) and x.strip() in ['<p>']:
-            # return x.strip()
-            return int(float(A))
+            return int(float(A)) # <p>だったらtokenizationに対応してA,Z,TTを返す
         return int(float(x)) - 1 
     except:
-        return 0  # or np.nan or any special ID like <m>
+        return 0  
 
 def safe_float_to_int_time(x): # timeは0始まりのままなのでOK
     try:
         if isinstance(x, str) and x.strip() in ['<p>']:
-            # return x.strip()
             return int(float(TT))
-        # それ以外は float → int
         return int(float(x))
     except:
-        return 0  # or np.nan or any special ID like <m>
+        return 0  
+    
+def safe_float_to_int_loc(x): # locは0始まりのままなのでOK
+    try:
+        if isinstance(x, str) and x.strip() in ['<p>']:
+            return int(float(Z))
+        return int(float(x))
+    except:
+        return 0
 
 context_arr = df_indivi.fillna(-1).astype('int32').to_numpy()
 
 df_act_clean = df_act.applymap(safe_float_to_int_act)
 df_time_clean = df_time.applymap(safe_float_to_int_time)
+df_loc_clean = df_loc.applymap(safe_float_to_int_loc)
 
 gender_tensor = df_indivi['gender'].apply(safe_float_to_int_time).astype('int32').to_numpy()
 age_tensor = df_indivi['age'].apply(safe_float_to_int_time).astype('int32').to_numpy()
@@ -122,20 +152,22 @@ age_tensor = df_indivi['age'].apply(safe_float_to_int_time).astype('int32').to_n
 # 最終的にテンソルを結合
 context_arr = np.stack([gender_tensor, age_tensor], axis=1)  # shape = [N, 2]
 time_arr = df_time_clean.astype('int32').to_numpy()
-time_tensor = torch.from_numpy(time_arr)
 act_arr = df_act_clean.astype('int32').to_numpy()
+loc_arr = df_loc_clean.astype('int32').to_numpy()
+
+time_tensor = torch.from_numpy(time_arr)
 act_tensor = torch.from_numpy(act_arr)
+loc_tensor = torch.from_numpy(loc_arr)
 
 time_data = torch.from_numpy(time_arr)
-# loc_data = torch.from_numpy(loc_arr)
+loc_data = torch.from_numpy(loc_arr)
 act_data = torch.from_numpy(act_arr)
-# context_data = torch.from_numpy(context_arr)
 context_data = torch.from_numpy(context_arr)
 '''contextが読めているかの確認のために全部0にしてみる'''
 # context_data = torch.zeros_like(torch.from_numpy(context_arr))
 
 time_vocab_size = TT + 4 # 時間数 + 4　経路予測やシーケンス学習で使うトークンの総数（状態数＋ダミーノード数など）：パディング，開始・終了，マスク用
-# loc_vocab_size = Z + 4
+loc_vocab_size = Z + 4
 act_vocab_size = A + 4
 # context_dim = context_data.shape[1] - 1 # 個人特徴量の次元数（個人IDは除外）
 # feature_dim = network.node_features.shape[1] # 特徴量の次元数 
@@ -149,7 +181,7 @@ B_en = wandb.config.B_en
 B_de = wandb.config.B_de 
 head_num = wandb.config.head_num 
 d_ie_time = wandb.config.d_ie_time 
-# d_ie_loc = wandb.config.d_ie_loc 
+d_ie_loc = wandb.config.d_ie_loc 
 d_ie_act = wandb.config.d_ie_act
 d_fe = wandb.config.d_fe 
 d_ff = wandb.config.d_ff 
@@ -162,7 +194,7 @@ identical_penalty_weight = wandb.config.identical_penalty_weight
 
 class MultiModalDataset(Dataset):
     def __init__(self, time_data, 
-                 # loc_data, 
+                 loc_data, 
                  act_data,
                  context_data
                  ):
@@ -175,29 +207,30 @@ class MultiModalDataset(Dataset):
             time_data = torch.tensor(time_data, dtype=torch.long)
         if not isinstance(act_data, torch.Tensor):
             act_data = torch.tensor(act_data, dtype=torch.long)
-        # if not isinstance(loc_data, torch.Tensor):
-        #     loc_data = torch.tensor(loc_data, dtype=torch.long)
+        if not isinstance(loc_data, torch.Tensor):
+            loc_data = torch.tensor(loc_data, dtype=torch.long)
         if not isinstance(context_data, torch.Tensor):
             context_data = torch.tensor(context_data, dtype=torch.float32)
         
         self.time_data = time_data
-        # self.loc_data = loc_data
+        self.loc_data = loc_data
         self.act_data = act_data
         self.context_data = context_data
 
         # 念のため長さが全部同じかチェック
         assert self.time_data.shape[0] == self.act_data.shape[0], \
             "act and loc must have the same number of samples" # seq_lenは自由にしてOK
+        assert self.time_data.shape[0] == self.loc_data.shape[0], \
+            "act and loc must have the same number of samples"
 
     def __len__(self):
         return self.act_data.shape[0]
 
     def __getitem__(self, idx): 
-        # return self.time_data[idx], self.loc_data[idx], self.act_data[idx], self.context_data[idx]
-        return self.time_data[idx], self.act_data[idx], self.context_data[idx]
+        return self.time_data[idx], self.loc_data[idx], self.act_data[idx], self.context_data[idx]
 
 # バッチ化
-dataset = MultiModalDataset(time_data, act_data, context_data)
+dataset = MultiModalDataset(time_data, loc_data, act_data, context_data)
 
 num_samples = len(dataset)
 train_size = int(num_samples * 0.8)
@@ -211,10 +244,10 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_
 model = GPT(
             context_vocab_sizes= context_vocab_sizes, # None, #context_vocab_sizes, 
             time_vocab_size = time_vocab_size, 
-            # loc_vocab_size = None, #loc_vocab_size, 
+            loc_vocab_size = loc_vocab_size, 
             act_vocab_size = act_vocab_size, 
             time_emb_dim = d_ie_time,
-            # loc_emb_dim = None, #  d_ie_loc,
+            loc_emb_dim = d_ie_loc,
             act_emb_dim = d_ie_act,
             #feature_dim = None, # feature_dim,
             # feature_emb_dim = None, # d_fe,
@@ -295,40 +328,40 @@ def find_eos_positions(logits, eos_token_id):
 
 
 def eos_alignment_loss(time_logits, 
-                    #    loc_logits, 
+                       loc_logits, 
                        act_logits,
                        time_eos_token_id, 
-                    #    loc_eos_token_id, 
+                       loc_eos_token_id, 
                        act_eos_token_id, mode = "l1"):
     time_eos_pos = find_eos_positions(time_logits, time_eos_token_id)
-    # loc_eos_pos = find_eos_positions(loc_logits, loc_eos_token_id)
+    loc_eos_pos = find_eos_positions(loc_logits, loc_eos_token_id)
     act_eos_pos = find_eos_positions(act_logits, act_eos_token_id)
 
-    # diff_tl = (time_eos_pos - loc_eos_pos).abs()
-    # diff_la = (loc_eos_pos - act_eos_pos).abs()
+    diff_tl = (time_eos_pos - loc_eos_pos).abs()
+    diff_la = (loc_eos_pos - act_eos_pos).abs()
     diff_at = (act_eos_pos - time_eos_pos).abs()
 
     if mode == 'l1':
-        alignment_loss = (diff_at).float().mean()
+        alignment_loss = (diff_tl + diff_la + diff_at).float().mean()
     elif mode == 'l2':
-        alignment_loss = (diff_at**2).float().mean()
+        alignment_loss = (diff_at**2 + diff_la**2 + diff_tl**2).float().mean()
     else:
         raise NotImplementedError
     return alignment_loss
 
 
 def repetition_penalty_loss(time_logits, 
-                            # loc_logits, 
+                            loc_logits, 
                             act_logits):
     # 各系列の予測IDを取得
     time_preds = time_logits.argmax(dim=-1)  # shape: (B, L)
-    # loc_preds = loc_logits.argmax(dim=-1)
+    loc_preds = loc_logits.argmax(dim=-1)
     act_preds = act_logits.argmax(dim=-1)
 
     # 前ステップと同じ三連組かどうかチェック
     repeated_mask = (
         (time_preds[:, 1:] == time_preds[:, :-1]) &
-        # (loc_preds[:, 1:] == loc_preds[:, :-1]) &
+        (loc_preds[:, 1:] == loc_preds[:, :-1]) &
         (act_preds[:, 1:] == act_preds[:, :-1])
     ).float()  # shape: (B, L-1), 値は0か1
 
@@ -354,6 +387,13 @@ criterion_time = WeightedCrossEntropyWithIgnoreIndex(
     ignore_index= A # padding
 )
 
+criterion_loc = WeightedCrossEntropyWithIgnoreIndex(
+    eos_token_id = Z + 1,
+    eos_weight = eos_weight,
+    separate_ids = [i for i in range(Z-7, Z)], separate_weight = separate_weight,
+    ignore_index= Z # padding
+)
+
 # criterion_time = nn.CrossEntropyLoss(ignore_index = TT) # loss = CrossEntropyLoss(ignore_index=TT)(input=logits, target=labels)
 # criterion_act = nn.CrossEntropyLoss(ignore_index = A) 
 
@@ -371,68 +411,72 @@ for epoch in range(num_epoch): # 各エポックで学習と評価を繰り返�
     epoch_loss = 0
     num_batches = 0
     batch_count = 0
-    for time_batch, act_batch, context_batch in train_loader:
+    for time_batch, loc_batch, act_batch, context_batch in train_loader:
         # print(' ************** in loop **************')
         # print('time tokens', time_batch[0], 'act tokens', act_batch[0], 'context', context_batch[0])
-        tokenizer = TokenizationGPT(network = None, TT = TT, A = A)
+        tokenizer = TokenizationGPT(network = None, TT = TT, Z = Z, A = A)
         context_tokens = context_batch 
         batch_count += 1
 
         # decoder input 
-        time_tokens2, act_tokens2 = tokenizer.tokenization(time_batch, act_batch, mode = "simple")
+        time_tokens2, loc_tokens2, act_tokens2 = tokenizer.tokenization(time_batch, loc_batch, act_batch, mode = "simple")
         time_complete_route_tokens = time_tokens2.long().to(device) # long: 変数形式の変換
         act_complete_route_tokens = act_tokens2.long().to(device) 
-        # loc_complete_route_tokens = loc_tokens2.long().to(device) 
+        loc_complete_route_tokens = loc_tokens2.long().to(device) 
         complete_feature_mat = None # tokenizer.make_feature_mat(loc_complete_route_tokens).to(device)
 
         # 教師データ（クロスエントロピー計算用）
-        time_tokens3, act_tokens3 = tokenizer.tokenization(time_batch, act_batch, mode = "next")
+        time_tokens3, loc_tokens3, act_tokens3 = tokenizer.tokenization(time_batch, loc_batch, act_batch, mode = "next")
         time_next_route_tokens = time_tokens3.long().to(device)
         act_next_route_tokens = act_tokens3.long().to(device)
+        loc_next_route_tokens = loc_tokens3.long().to(device)
         
         # logit分布→softmaxで確率分布に変換
-        time_output, act_output = model(
+        time_output, loc_output, act_output = model(
                                         context_tokens, # この中で自動でcontextと3つのtokensequenceが結合される→
                                         # time_discontinuous_route_tokens, loc_discontinuous_route_tokens, act_discontinuous_route_tokens, discontinuous_feature_mat,  # for encoder
                                         time_complete_route_tokens, 
+                                        loc_complete_route_tokens,
                                         act_complete_route_tokens #, complete_feature_mat
                                         ) # for decoder
  
         # 出力をソフトマックスで確率に変換
         act_probs = F.softmax(act_output, dim=-1)  # shape: [B, L, V]
         time_probs = F.softmax(time_output, dim=-1)  # shape: [B, L, V]
+        loc_probs = F.softmax(loc_output, dim=-1)  # shape: [B, L, V]
 
         # <e> トークンのインデックス（例：7）
         act_e_token_id = tokenizer.act_SPECIAL_TOKENS["<E>"]
         time_e_token_id = tokenizer.time_SPECIAL_TOKENS["<E>"]
+        loc_e_token_id = tokenizer.loc_SPECIAL_TOKENS["<E>"]
 
         # <e> の確率だけ取り出す
         act_e_probs = act_probs[:, :, act_e_token_id]  # shape: [B, L]
         time_e_probs = time_probs[:, :, time_e_token_id]  # shape: [B, L]
         time_softmax_output = F.softmax(time_output[0], dim=-1)
-        # loc_softmax_output = F.softmax(loc_output[0], dim=-1)
+        loc_softmax_output = F.softmax(loc_output[0], dim=-1)
         act_softmax_output = F.softmax(act_output[0], dim=-1)
 
         # 最大値とそのインデックスを取得
         _, time_predicted_indices_2 = torch.max(time_softmax_output, dim=-1)  # dim=-1 → 語彙次元で最大を取る
-        # _, loc_predicted_indices_2 = torch.max(loc_softmax_output, dim=-1)
+        _, loc_predicted_indices_2 = torch.max(loc_softmax_output, dim=-1)
         _, act_predicted_indices_2 = torch.max(act_softmax_output, dim=-1)
 
         loss_time = criterion_time(time_output.reshape(-1, time_vocab_size), time_next_route_tokens.reshape(-1)) # viewの部分は，テンソル loc_output の形状を変換（reshape）
         loss_act = criterion_act(act_output.reshape(-1, act_vocab_size), act_next_route_tokens.reshape(-1))
-        # loss_loc = criterion_loc(loc_output.reshape(-1, loc_vocab_size), loc_next_route_tokens.reshape(-1))
+        loss_loc = criterion_loc(loc_output.reshape(-1, loc_vocab_size), loc_next_route_tokens.reshape(-1))
 
-        alignment_loss = eos_alignment_loss(time_output, act_output, 
+        alignment_loss = eos_alignment_loss(time_output, loc_output, act_output, 
                                             time_eos_token_id = tokenizer.time_SPECIAL_TOKENS["<E>"],
-                                            # loc_eos_token_id = tokenizer.loc_SPECIAL_TOKENS["<e>"],
+                                            loc_eos_token_id = tokenizer.loc_SPECIAL_TOKENS["<E>"],
                                             act_eos_token_id = tokenizer.act_SPECIAL_TOKENS["<E>"],
                                             mode = "l1"
                                             )
 
-        identical_loss = repetition_penalty_loss(time_output, act_output)
+        identical_loss = repetition_penalty_loss(time_output, loc_output, act_output)
         
         # 合成損失関数
-        loss = loss_time + loss_act + alignment_loss_weight * alignment_loss + identical_penalty_weight * identical_loss
+        loss = loss_time + loss_loc + loss_act + alignment_loss_weight * alignment_loss + identical_penalty_weight * identical_loss
         # print('loss_time', loss_time, 'loss_act', loss_act, 'alignment_loss', alignment_loss, 'identical_loss', identical_loss)
 
         optimizer.zero_grad()
@@ -460,12 +504,12 @@ for epoch in range(num_epoch): # 各エポックで学習と評価を繰り返�
         epoch_loss = 0
         num_batches = 0
         # for i, batch in enumerate(val_loader): # バリデーションデータが読まれる
-        for time_batch, act_batch, context_batch in val_loader:
+        for time_batch, loc_batch, act_batch, context_batch in val_loader:
             time_batch = time_batch.to(device)
             act_batch = act_batch.to(device)
-            # loc_batch = loc_batch.to(device)
+            loc_batch = loc_batch.to(device)
             context_tokens = context_batch.to(device) # そのまま渡すのでいいはず
-            tokenizer = TokenizationGPT(network = None, TT = TT, A = A)
+            tokenizer = TokenizationGPT(network = None, TT = TT, Z = Z, A = A)
 
             # encoder input 
             # time_tokens, loc_tokens, act_tokens = tokenizer.tokenization(time_batch, loc_batch, act_batch, mode = "discontinuous")
@@ -475,39 +519,40 @@ for epoch in range(num_epoch): # 各エポックで学習と評価を繰り返�
             # discontinuous_feature_mat = tokenizer.make_feature_mat(loc_discontinuous_route_tokens).to(device) # 特徴量はノードデータのみなのでloc_dataに対応させて読み込む
 
             # decoder input 
-            time_tokens2, act_tokens2 = tokenizer.tokenization(time_batch, act_batch, mode = "simple")
+            time_tokens2, loc_tokens2, act_tokens2 = tokenizer.tokenization(time_batch, loc_batch, act_batch, mode = "simple")
             time_complete_route_tokens = time_tokens2.long().to(device) # long: 変数形式の変換
             act_complete_route_tokens = act_tokens2.long().to(device) # long: 変数形式の変換
-            # loc_complete_route_tokens = loc_tokens2.long().to(device) 
+            loc_complete_route_tokens = loc_tokens2.long().to(device) 
             # complete_feature_mat = tokenizer.make_feature_mat(loc_complete_route_tokens).to(device)
 
             # 正解データ（クロスエントロピー計算用） 
-            time_tokens3, act_tokens3 = tokenizer.tokenization(time_batch, act_batch, mode = "next")
+            time_tokens3, loc_tokens3, act_tokens3 = tokenizer.tokenization(time_batch, loc_batch, act_batch, mode = "next")
             time_next_route_tokens = time_tokens3.long().to(device)
             act_next_route_tokens = act_tokens3.long().to(device)
+            loc_next_route_tokens = loc_tokens3.long().to(device)
 
-            time_output, act_output = model(
+            time_output, loc_output, act_output = model(
                                         context_tokens, # B * context_dim
                                         # time_discontinuous_route_tokens, loc_discontinuous_route_tokens, act_discontinuous_route_tokens, discontinuous_feature_mat,  # for encoder
                                         time_complete_route_tokens, 
+                                        loc_complete_route_tokens,
                                         act_complete_route_tokens, 
                                         # complete_feature_mat
                                         ) # for decoder
             loss_time = criterion_time(time_output.reshape(-1, time_vocab_size), time_next_route_tokens.reshape(-1)) # viewの部分は，テンソル loc_output の形状を変換（reshape）
             loss_act = criterion_act(act_output.reshape(-1, act_vocab_size), act_next_route_tokens.reshape(-1))
-            # loss_loc = criterion_loc(loc_output.reshape(-1, loc_vocab_size), loc_next_route_tokens.reshape(-1))
+            loss_loc = criterion_loc(loc_output.reshape(-1, loc_vocab_size), loc_next_route_tokens.reshape(-1))
 
-            alignment_loss = eos_alignment_loss(time_output, act_output, 
+            alignment_loss = eos_alignment_loss(time_output, loc_output, act_output, 
                                                 time_eos_token_id = tokenizer.time_SPECIAL_TOKENS["<E>"],
-                                               # loc_eos_token_id = tokenizer.loc_SPECIAL_TOKENS["<>"],
+                                                loc_eos_token_id = tokenizer.loc_SPECIAL_TOKENS["<E>"],
                                                 act_eos_token_id = tokenizer.act_SPECIAL_TOKENS["<E>"],
                                                 mode = "l1"
                                                 )
-            identical_loss = repetition_penalty_loss(time_output, act_output)
+            identical_loss = repetition_penalty_loss(time_output, loc_output, act_output)
 
             # 合成損失関数
-            loss = loss_time + loss_act + alignment_loss_weight * alignment_loss + identical_penalty_weight * identical_loss
-
+            loss = loss_time + loss_loc + loss_act + alignment_loss_weight * alignment_loss + identical_penalty_weight * identical_loss
 
             # if loss < 1.5:
             #     print('time teacher', time_next_route_tokens[0], 'shape', time_next_route_tokens[0].shape)
@@ -541,7 +586,6 @@ for epoch in range(num_epoch): # 各エポックで学習と評価を繰り返�
         print("Early stopping triggered.")
         break
 
-
     # logger.info(f"Epoch [{epoch+1}/{num_epoch}], Average Loss: {val_loss:.4f}")
     wandb.log({"total_loss": train_loss, "val_loss": val_loss})
 wandb.finish()
@@ -549,12 +593,12 @@ wandb.finish()
 print('********** end of epoch **********')
 print('time teacher', time_next_route_tokens[0], 'shape', time_next_route_tokens[0].shape)
 print('time_predict', time_predicted_indices_2) 
-# print('loc teacher', loc_next_route_tokens[0], 'shape', loc_next_route_tokens[0].shape)
-# print('loc_predict', loc_predicted_indices_2)
+print('loc teacher', loc_next_route_tokens[0], 'shape', loc_next_route_tokens[0].shape)
+print('loc_predict', loc_predicted_indices_2)
 print('act teacher', act_next_route_tokens[0], 'shape', act_next_route_tokens[0].shape)
 print('act_predict', act_predicted_indices_2)
 print('context teacher', context_tokens[0])
-print('loss_time', loss_time, 'loss_act', loss_act, 'alignment_loss', alignment_loss, 'identical_loss', identical_loss)
+print('loss_time', loss_time, 'loss_loc' , loss_loc, 'loss_act', loss_act, 'alignment_loss', alignment_loss, 'identical_loss', identical_loss)
 
 # モデルのパラメータを保存 (多くの行列やテンソルを含んでいるため)
 save_data = {
