@@ -31,7 +31,6 @@ class Tokenization:
             "<m>": A + 3,  # 非隣接ノードトークン # 現実には生成時にプリズム制約などをかけることができるはず（多分）
         }
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        #self.to(self.device)
         self.time_token_sequences = None   
         self.loc_token_sequences = None
         self.act_token_sequences = None
@@ -358,8 +357,6 @@ class TokenizationGPT:
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 2] = self.act_SPECIAL_TOKENS["<p>"]
 
             # 冒頭のuseridを<B>に置換
-            # print('-----in simple -----')    
-            # print('time tokens', time_tokens[0])
             # time_tokens[torch.arange(time_tokens.size(0)), 0] = self.time_SPECIAL_TOKENS["<B>"]
             # act_tokens[torch.arange(act_tokens.size(0)), 0] = self.act_SPECIAL_TOKENS["<B>"]
             # 新しい <B> トークン列を作成（すべて <B> ID）
@@ -370,17 +367,12 @@ class TokenizationGPT:
             time_tokens = torch.cat([bos_time, time_tokens], dim=1)
             act_tokens  = torch.cat([bos_act,  act_tokens],  dim=1)
 
-            # print('-----after simple -----')
-            # print('time tokens', time_tokens[0])
-
             # 最後一個抜く（正解データとして使われるから）
             time_tokens = time_tokens[:, :-1]
             act_tokens = act_tokens[:, :-1]
 
         elif mode == "complete": # begin and end
             # 冒頭に<B>を追加
-            # print('-----in complete-----')    
-            # print('time tokens', time_tokens[0])
             # time_tokens[torch.arange(time_tokens.size(0)), 0] = self.time_SPECIAL_TOKENS["<B>"]
             # act_tokens[torch.arange(act_tokens.size(0)), 0] = self.act_SPECIAL_TOKENS["<B>"]
             bos_time = torch.full((time_tokens.size(0), 1), self.time_SPECIAL_TOKENS["<B>"], dtype=time_tokens.dtype, device=time_tokens.device)
@@ -390,8 +382,6 @@ class TokenizationGPT:
             time_tokens = torch.cat([bos_time, time_tokens], dim=1)
             act_tokens  = torch.cat([bos_act,  act_tokens],  dim=1)
 
-            # print('-----after in complete-----')
-            # print('time tokens', time_tokens[0])
             # 非パディングの最後尾をEに置換
             pad_time = time_tokens == self.time_SPECIAL_TOKENS["<p>"] # dictの値を参照している
             pad_act = act_tokens == self.act_SPECIAL_TOKENS["<p>"]
@@ -412,25 +402,14 @@ class TokenizationGPT:
             pad_time = time_tokens == self.time_SPECIAL_TOKENS["<p>"] # dictの値を参照している
             pad_act = act_tokens == self.act_SPECIAL_TOKENS["<p>"]
 
-
             # # 最後の終了トークンを<e><p>に置換
             first_pad_time_idx = (~pad_time).float().argmin(dim=1)
             first_pad_act_idx = (~pad_act).float().argmin(dim=1)     
-
-            # print('-------in next------')
-            # print('pad time', pad_time[0])
-
-            # print('time tokens', time_tokens[0])
-            # print('act tokens', act_tokens[0])
 
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 1] = self.time_SPECIAL_TOKENS["<p>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 1] = self.act_SPECIAL_TOKENS["<p>"]
             time_tokens[torch.arange(time_tokens.size(0)), first_pad_time_idx - 2] = self.time_SPECIAL_TOKENS["<E>"]
             act_tokens[torch.arange(act_tokens.size(0)), first_pad_act_idx - 2] = self.act_SPECIAL_TOKENS["<E>"]  
-
-            # print('-------after in next------')
-            # print('time tokens', time_tokens[0])
-            # print('act tokens', act_tokens[0])
 
             # 冒頭を抜く
             # time_tokens = time_tokens[:, 1:]
@@ -513,112 +492,3 @@ class TokenizationGPT:
         feature_mat = torch.zeros((batch_size, seq_len, feature_dim), device=self.device)
         feature_mat = total_node_features[token_sequences] # token_sequenceをインデックスとして渡すと対応する特徴量が取得できる
         return feature_mat # B*T*F # 
-
-
-'''
-    def make_VAE_input(self, token_sequences, time_index, img_dic):
-        # 時間ごとの特徴量を格納
-        feature_list = [img_dic[idx.item()].to(self.device) for idx in time_index]
-        combined_feature_mat = torch.stack(feature_list, dim=0)
-        combined_feature_mat = torch.nn.functional.pad(combined_feature_mat, (0, 0, 1, 1, 0, 1, 0, 0), mode='constant', value=0)
-
-        #シーケンスの形状
-        batch_size, seq_len = token_sequences.shape
-        ble_to_camera = torch.tensor([
-        3, 4, 6, 6, 6, 6, 6, 6, 1, 2, 0, 6, 6, 6, 6, 6, 5, 6, 6, 6, 6, 6, 6
-        ], device=self.device)
-        # トークンシーケンスに基づきカメラインデックスを取得
-        camera_indices = ble_to_camera[token_sequences]
-
-        #print(f'camera_indices: {camera_indices.shape}')
-        #print(f'combined_feature_mat: {combined_feature_mat.shape}')
-        #print("combined_feature_mat.shape:", combined_feature_mat.shape)
-        #print("インデックスの範囲: ", torch.min(camera_indices), torch.max(camera_indices))  # 使用しているインデックスを確認
-
-        feature_mat = combined_feature_mat[
-        torch.arange(batch_size, device=self.device).unsqueeze(1),  # バッチ次元
-        camera_indices,                                            # カメラインデックス
-        torch.arange(seq_len, device=self.device).unsqueeze(0)     # 時間次元
-        ]
-
-        return feature_mat
-    
-    def make_VAE_input_sim(self, token_sequences, time_index, img_dic):
-        # 時間ごとの特徴量を格納
-        feature_list = [img_dic[idx.item()].to(self.device) for idx in time_index]
-        combined_feature_mat = torch.stack(feature_list, dim=0)
-        combined_feature_mat = torch.nn.functional.pad(combined_feature_mat, (0, 0, 1, 1, 0, 1, 0, 0), mode='constant', value=0)
-        
-        #シーケンスの形状
-        batch_size, seq_len = token_sequences.shape
-        ble_to_camera = torch.tensor([
-        3, 4, 6, 6, 6, 0, 0, 6, 1, 2, 0, 6, 6, 6, 6, 6, 5, 6, 6, 6, 6, 6, 6
-        ], device=self.device)
-        # トークンシーケンスに基づきカメラインデックスを取得
-        camera_indices = ble_to_camera[token_sequences]
-
-        #print(f'camera_indices: {camera_indices.shape}')
-        #print(f'combined_feature_mat: {combined_feature_mat.shape}')
-        #print("combined_feature_mat.shape:", combined_feature_mat.shape)
-        #print("インデックスの範囲: ", torch.min(camera_indices), torch.max(camera_indices))  # 使用しているインデックスを確認
-
-
-        feature_mat = combined_feature_mat[
-        torch.arange(batch_size, device=self.device).unsqueeze(1),  # バッチ次元
-        camera_indices,                                            # カメラインデックス
-        torch.arange(seq_len, device=self.device).unsqueeze(0)     # 時間次元
-        ]
-
-        return feature_mat
-    
-
-
-    def make_VAE_input(self, token_sequences, time_index, img_dic):
-        # time_index の各要素に対応する特徴量を格納するリスト
-        feature_list = []
-
-        # time_index の各要素についてループ処理
-        for idx in time_index:
-            # 該当する時間の特徴量が格納されたデータを取得
-            idx_value = idx.item()  # tensor -> 整数
-            time_feature_mat = img_dic[idx_value].to(self.device)
-            #print(time_feature_mat.size())
-            if torch.isnan(time_feature_mat).any() or torch.isinf(time_feature_mat).any():
-                print(f"NaN or Inf detected in time_feature_mat for {idx_value}")
-                break
-            #time_feature_mat = time_feature_mat[:, :, :2]
-
-            # サイズを合わせるために，time_feature_mat の前後をゼロ埋め
-            feature_dim = time_feature_mat.size(2)
-            padding_mat = torch.zeros((time_feature_mat.size(0), 1, feature_dim), device=self.device)
-            time_feature_mat = torch.cat((padding_mat, time_feature_mat, padding_mat), dim=1)
-
-            # データ欠損対応ようのパディング
-            padding_mat2 = torch.zeros((1, time_feature_mat.size(1), feature_dim), device=self.device)
-            time_feature_mat = torch.cat((time_feature_mat, padding_mat2), dim=0)
-
-            # リストに追加
-            feature_list.append(time_feature_mat)
-
-        # time_index に対応するすべての特徴量を結合
-        # 各 time_feature_mat が同じ形状であると仮定して結合
-        combined_feature_mat = torch.stack(feature_list, dim=0)
-        #print(combined_feature_mat.size())
-
-        batch_size, seq_len = token_sequences.shape
-        feature_mat = torch.zeros(batch_size, seq_len, combined_feature_mat.size(3), device=self.device)
-        #print(feature_mat.size())
-
-        # カメラの行と BLE の行の対応
-        ble_to_camera_dic = {
-            0: 3, 1: 4, 2: 6, 3: 6, 4: 6, 5: 6, 6: 6, 7: 6, 8: 1, 9: 2, 10: 0,
-            11: 6, 12: 6, 13: 6, 14: 6, 15: 6, 16: 5, 17: 6, 18: 6, 19: 6, 20: 6, 21: 6, 22: 6
-        }
-
-        # トークンシーケンスに基づいて特徴行列を埋める
-        for i in range(batch_size):
-            for j in range(seq_len):
-                feature_mat[i, j, :] = combined_feature_mat[i, ble_to_camera_dic[token_sequences[i, j].item()], j, :]
-
-        return feature_mat
-'''

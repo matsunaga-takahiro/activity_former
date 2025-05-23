@@ -1,6 +1,6 @@
 # Decoder only Transformer for Syutoken PP
 # Orijinal: Kurasawa Master Thesis
-# Rewritten: Takahiro Matsunaga for 2025 ieee
+# Rewritten: Takahiro Matsunaga for 2025 jts
 
 import torch
 import pandas as pd
@@ -34,7 +34,6 @@ wandb.init(
     "B_de" : 2,
     "head_num" : 4,
     "d_ie_time" : 16, 
-    # "d_ie_loc" : 16, 
     "d_ie_act" : 16, 
     "d_fe" : 4, 
     "d_ff" : 32,
@@ -54,37 +53,23 @@ wandb.config.update({"savefilename": savefilename}, allow_val_change=True)
 base_path = '/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# df_act = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/actlog_finalinput_cleaned.csv', index_col=0) #, header=None)
-# df_time = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/timelog_finalinput_cleaned.csv', index_col=0) #, header=None)
 df_act = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/actlog_finalinput_structured.csv', index_col=0) #, header=None)
 df_time = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/timelog_finalinput_structured.csv', index_col=0) #, header=None)
 df_indivi_ori = pd.read_csv('/Users/matsunagatakahiro/Desktop/jrres/PPcameraTG/gpslog/attri_all.csv', index_col=None) #, index_col=0)#, header=None)
 
-# print('df_indivi_ori')
-# print(df_indivi_ori.head(5))
-# print('df_act[:, 1]')
-# print(df_act.iloc[:, 0].head(5))
 user_order = df_act.iloc[:, 0].rename('userid')  # Seriesに名前をつける
 df_indivi = df_indivi_ori.set_index('userid').reindex(user_order).reset_index()
 
-# print('df_indivi')
-# print(df_indivi.head(5))
 df_time.columns = range(df_time.shape[1])
 df_act.columns = range(df_act.shape[1])
 
 # print('------after-----')
-# print(df_indivi, df_indivi.columns)
-# df_indivi = df_indivi.iloc[:, 1:] # useridを除く
 df_indivi['age'] = df_indivi['age'].apply(lambda x: x // 10)
 context_vocab_sizes_dict = {}
 
-# print('======df_indivi_afrer=====') # OK
-# print(df_indivi)
 
 
 for col in df_indivi.columns:
-    # print(len(df_indivi[col].unique())) # ユニークな値を取得
-    # print(df_indivi[col].unique()) # ユニークな値を取得
     context_vocab_sizes_dict[col] = len(df_indivi[col].unique()) # ユニークな値の数を辞書に格納
 
 context_vocab_sizes = list(context_vocab_sizes_dict.values())
@@ -104,12 +89,6 @@ df_act  = df_act.applymap(lambda x: act2id.get(str(x), x)  if pd.notna(x) else x
 
 df_time = df_time.iloc[:, 1:] # index, useridを除く
 df_act = df_act.iloc[:, 1:] # index, useridを除く
-
-# print('after fileter')
-# print('df_time')
-# print(df_time.iloc[:5, :25])
-# print('df_act')
-# print(df_act.iloc[:5, :25])
 
 # floatとかをintに変換＆<p>
 def safe_float_to_int_act(x): # actを0始まりに変える
@@ -135,11 +114,6 @@ context_arr = df_indivi.fillna(-1).astype('int32').to_numpy()
 
 df_act_clean = df_act.applymap(safe_float_to_int_act)
 df_time_clean = df_time.applymap(safe_float_to_int_time)
-
-# print('df_act_clean')
-# print(df_act_clean.iloc[:5, :25])
-# print('df_time_clean')
-# print(df_time_clean.iloc[:5, :25])
 
 gender_tensor = df_indivi['gender'].apply(safe_float_to_int_time).astype('int32').to_numpy()
 age_tensor = df_indivi['age'].apply(safe_float_to_int_time).astype('int32').to_numpy()
@@ -252,7 +226,7 @@ model = GPT(
 class WeightedCrossEntropyWithIgnoreIndex(nn.Module):
     def __init__(self, eos_token_id, eos_weight, ignore_index,
                  separate_ids, separate_weight
-                 ): #  stay_weight=0.5 # <-- 新たに追加by kurasawa
+                 ):
         """
         CrossEntropyLoss with weighted EOS token loss, ignore_index, 
         and an optional stay_weight to handle 'stay' transitions.
@@ -263,7 +237,6 @@ class WeightedCrossEntropyWithIgnoreIndex(nn.Module):
         self.separate_ids = separate_ids # list
         self.separate_weight = separate_weight # scaler
         self.ignore_index = ignore_index
-        # self.stay_weight = stay_weight  # stayの重み(小さめにする)
 
         # ベースのCEは reduction='none' で呼び出す
         self.base_loss_fn = nn.CrossEntropyLoss(
@@ -278,9 +251,6 @@ class WeightedCrossEntropyWithIgnoreIndex(nn.Module):
         :param former_targets: [batch_size, seq_len]
         """
         # 形状変換
-        #print(logits.shape)
-        #print(targets.shape)
-        #print(former_targets.shape)
         batch_size_seq_len, vocab_size = logits.size()
         #logits = logits.view(-1, vocab_size)           # [batch_size * seq_len, vocab_size]
         #targets = targets.view(-1)                     # [batch_size * seq_len]
@@ -301,15 +271,7 @@ class WeightedCrossEntropyWithIgnoreIndex(nn.Module):
             sep_mask_list.append(sep_mask)
             weights[sep_mask] = self.separate_weight
         # sep_mask = [targets == id for id in self.separate_ids]
-        # print('sep_mask', sep_mask, len(sep_mask))
-        # print('weights', weights, len(weights))
         # weights[sep_mask] = self.separate_weight
-        
-        # stay (とどまる) 判定: (target == former_target) かつ ignore_index でない
-        # stay_mask = (targets == former_targets) & (targets != self.ignore_index)
-        # stay の重み (例: 0.5)
-        # weights[stay_mask] = self.stay_weight
-
         # 最終的な重み付き損失
         weighted_loss = (loss_per_token * weights).sum() / (weights[targets != self.ignore_index].sum())
 
@@ -428,8 +390,6 @@ for epoch in range(num_epoch): # 各エポックで学習と評価を繰り返�
         act_next_route_tokens = act_tokens3.long().to(device)
         
         # logit分布→softmaxで確率分布に変換
-        # print('time_complete_route_tokens', time_complete_route_tokens.shape)
-        # print('time complete_route_tokens', time_complete_route_tokens.shape, 'act complete_route_tokens', act_complete_route_tokens.shape)
         time_output, act_output = model(
                                         context_tokens, # この中で自動でcontextと3つのtokensequenceが結合される→
                                         # time_discontinuous_route_tokens, loc_discontinuous_route_tokens, act_discontinuous_route_tokens, discontinuous_feature_mat,  # for encoder
@@ -525,9 +485,6 @@ for epoch in range(num_epoch): # 各エポックで学習と評価を繰り返�
             time_next_route_tokens = time_tokens3.long().to(device)
             act_next_route_tokens = act_tokens3.long().to(device)
 
-            # print('context tokens', context_tokens[0], context_tokens.shape)
-            # sys.exit()
-            # loc_next_route_tokens = loc_tokens3.long().to(device)
             time_output, act_output = model(
                                         context_tokens, # B * context_dim
                                         # time_discontinuous_route_tokens, loc_discontinuous_route_tokens, act_discontinuous_route_tokens, discontinuous_feature_mat,  # for encoder
