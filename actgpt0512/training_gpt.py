@@ -1,6 +1,7 @@
 # Decoder only Transformer for Syutoken PP
 # Orijinal: Kurasawa Master Thesis
 # Rewritten: Takahiro Matsunaga for 2025 jts
+# locつきの内容に変更する
 
 import torch
 import pandas as pd
