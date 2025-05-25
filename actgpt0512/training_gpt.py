@@ -76,7 +76,6 @@ def to_int_if_possible(x):
     except:
         return x  # 変換できない文字列（例：'<s1>'など）はそのまま返す
 
-df_act.iloc[:, 1:] = df_act.iloc[:, 1:].applymap(to_int_if_possible)
 df_act_val = df_act.iloc[1:, 1:].values.astype(str)
 nunique_act = np.unique(df_act_val)
 print('act num:', len(nunique_act)) 
