@@ -69,11 +69,11 @@ df_act.columns = range(df_act.shape[1])
 df_act.iloc[:, 1] = df_act.iloc[:, 1].astype(str).str.split('.').str[0] # 最初の行動を整数に
 
 def to_int_if_possible(x):
-    try:
+    try: # 例外が発生するかもしれない処理
         f = float(x)
         i = int(f)
         return i if f == i else x  # 2.0 → 2, 2.5 はそのまま（必要なら切り捨てにしても可）
-    except:
+    except: # 例外が発生した場合の処理
         return x  # 変換できない文字列（例：'<s1>'など）はそのまま返す
 
 df_act_val = df_act.iloc[1:, 1:].values.astype(str)
@@ -402,8 +402,8 @@ early_stopping_counter = 0
 early_stopping_patience = 2000  # 何エポック改善しなければ止めるか（お好みで）
 best_model_state = None
 
-optimizer = torch.optim.Adam(model.parameters(), lr = eta) 
-history = {"train_loss": [], "val_loss": []} 
+optimizer = torch.optim.Adam(model.parameters(), lr = eta)
+history = {"train_loss": [], "val_loss": []}
 for epoch in range(num_epoch): # 各エポックで学習と評価を繰り返す
     print(f'------- {epoch} th epoch -------')
     model.train()
