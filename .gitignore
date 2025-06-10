@@ -6,3 +6,5 @@
 /actgpt0512/__pycache__/
 /actgpt0512/wandb/
 /actgpt0512/attn_image/
+/simple_routeformer/NOTINUSE/
+/CausalTransformer/
