@@ -63,11 +63,8 @@ df_indivi = df_indivi_ori.set_index('userid').reindex(user_order).reset_index()
 df_time.columns = range(df_time.shape[1])
 df_act.columns = range(df_act.shape[1])
 
-# print('------after-----')
 df_indivi['age'] = df_indivi['age'].apply(lambda x: x // 10)
 context_vocab_sizes_dict = {}
-
-
 
 for col in df_indivi.columns:
     context_vocab_sizes_dict[col] = len(df_indivi[col].unique()) # ユニークな値の数を辞書に格納
