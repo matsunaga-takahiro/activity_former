@@ -1,4 +1,5 @@
-/actformer0411
+/actformer0411/__pycache__/
+/actformer0411/wandb/
 /__pycache__/
 /.DS_Store
 /reference/
